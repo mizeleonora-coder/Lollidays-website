@@ -79,18 +79,12 @@
   </div>
   <div class="wrap">
     <form class="calcbar" id="calcForm" novalidate aria-label="Calcolatore dei guadagni">
-      <label class="cb-field">
+      <div class="cb-field cb-addr">
         <svg><use href="#i-pin"/></svg>
-        <span class="sr-only">Località</span>
-        <select id="k_zona" required>
-          <option value="" selected disabled>Dove si trova l'alloggio?</option>
-          <option value="locarno">Locarno e Ascona</option>
-          <option value="lugano">Lugano e dintorni</option>
-          <option value="valli">Valli del Ticino</option>
-          <option value="bellinzona">Bellinzona e Riviera</option>
-          <option value="altra">Altra località in Svizzera</option>
-        </select>
-      </label>
+        <label for="k_addr" class="sr-only">Indirizzo dell'alloggio</label>
+        <input id="k_addr" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="k_list" autocomplete="off" spellcheck="false" placeholder="Indirizzo dell'alloggio">
+        <ul id="k_list" class="ac-list" role="listbox" aria-label="Indirizzi suggeriti" hidden></ul>
+      </div>
       <label class="cb-field">
         <svg><use href="#i-bed"/></svg>
         <span class="sr-only">Camere da letto</span>
@@ -112,8 +106,21 @@
         </select>
       </label>
       <button class="btn btn-primary cb-btn" type="submit">Calcola la stima</button>
+      <div class="cb-fallback" id="k_fallback" hidden>
+        <label for="k_zona">I suggerimenti degli indirizzi non sono disponibili. Scegli la zona:</label>
+        <select id="k_zona">
+          <option value="" selected disabled>Dove si trova l'alloggio?</option>
+          <option value="locarno">Locarno e Ascona</option>
+          <option value="lugano">Lugano e dintorni</option>
+          <option value="valli">Valli del Ticino</option>
+          <option value="bellinzona">Bellinzona e Riviera</option>
+          <option value="ticino">Altra località in Ticino</option>
+          <option value="altra">Altra località in Svizzera</option>
+        </select>
+      </div>
     </form>
-    <p class="err cb-err" id="k_err" hidden>Scegli dove si trova l'alloggio e quante camere ha.</p>
+    <p class="err cb-err" id="k_err" hidden></p>
+    <p class="cb-zone" id="k_zone" hidden></p>
 
     <div class="calc-result" id="k_result" hidden aria-live="polite">
       <div>

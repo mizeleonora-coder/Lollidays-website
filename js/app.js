@@ -71,11 +71,18 @@ $("#leadForm").addEventListener("submit", e => {
 /* ---------- Earnings calculator ----------
    VALORI DI ESEMPIO: sostituirli con dati reali di mercato.
    prezzoNotte: prezzo medio per notte in CHF, per numero di camere (0 = monolocale)
-   fattoreZona: moltiplicatore per località
+   zone: moltiplicatore per zona; "comuni" elenca i comuni (in minuscolo) che appartengono alla zona
    nottiOccupate: notti prenotate all'anno [minimo, massimo] */
 const STIMA = {
   prezzoNotte: {0:95, 1:130, 2:175, 3:230, 4:300},
-  fattoreZona: {locarno:1.15, lugano:1.10, valli:0.95, bellinzona:0.85, altra:1.00},
+  zone: {
+    locarno:    {nome:"Locarno e Ascona", fattore:1.15, comuni:["locarno","ascona","muralto","minusio","losone","brissago","ronco sopra ascona","orselina","tenero-contra","gordola","terre di pedemonte"]},
+    lugano:     {nome:"Lugano e dintorni", fattore:1.10, comuni:["lugano","paradiso","melide","morcote","bissone","caslano","collina d'oro","sorengo","massagno","porza","savosa","vico morcote"]},
+    valli:      {nome:"Valli del Ticino", fattore:0.95, comuni:["maggia","cevio","lavizzara","avegno gordevio","verzasca","onsernone","centovalli","bosco/gurin","campo (vallemaggia)","linescio","cerentino"]},
+    bellinzona: {nome:"Bellinzona e Riviera", fattore:0.85, comuni:["bellinzona","arbedo-castione","riviera","lumino","sant'antonino","cadenazzo"]},
+    ticino:     {nome:"Altra località in Ticino", fattore:0.95, comuni:[]},
+    altra:      {nome:"Altra località in Svizzera", fattore:1.00, comuni:[]}
+  },
   nottiOccupate: {anno:[140,190], stagione:[90,130]},
   commissionePremium: 0.10
 };
@@ -86,11 +93,102 @@ const round500 = n => Math.round(n/500)*500;
 const round50 = n => Math.round(n/50)*50;
 let ultimaStima = null;
 
+/* ----- Indirizzi: suggerimenti dal servizio federale geo.admin.ch (gratuito, solo Svizzera) ----- */
+const GEO_URL = "https://api3.geo.admin.ch/rest/services/api/SearchServer?type=locations&origins=address&limit=6&searchText=";
+let indirizzo = null;          // {testo, comune, cantone, zonaKey}
+let acItems = [], acActive = -1, acTimer = null, acCtrl = null, geoKo = false;
+
+function zonaDaComune(comune, cantone){
+  const c = (comune || "").toLowerCase();
+  for (const [key, z] of Object.entries(STIMA.zone)) if (z.comuni.includes(c)) return key;
+  return cantone === "ti" ? "ticino" : "altra";
+}
+function leggiRisultato(r){
+  const a = r.attrs || {};
+  const testo = String(a.label || "").replace(/\s*<b>/, ", ").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+  const d = String(a.detail || "").trim().toLowerCase();
+  const m = d.match(/\b\d{4} .+? \d{1,5} (.+?) ch ([a-z]{2})$/);
+  const comune = m ? m[1] : "", cantone = m ? m[2] : (d.match(/ ch ([a-z]{2})$/) || [])[1] || "";
+  return {testo, comune, cantone, zonaKey: zonaDaComune(comune, cantone)};
+}
+function mostraFallback(){
+  geoKo = true;
+  $("#k_fallback").hidden = false;
+  chiudiLista();
+}
+function apriLista(){ $("#k_list").hidden = false; $("#k_addr").setAttribute("aria-expanded","true"); }
+function chiudiLista(){
+  $("#k_list").hidden = true; $("#k_addr").setAttribute("aria-expanded","false");
+  $("#k_addr").removeAttribute("aria-activedescendant"); acActive = -1;
+}
+function disegnaLista(){
+  const ul = $("#k_list");
+  if (!acItems.length){
+    ul.innerHTML = `<li class="ac-empty" role="option" aria-disabled="true">Nessun indirizzo trovato. Prova ad aggiungere il numero civico o il CAP.</li>`;
+  } else {
+    ul.innerHTML = acItems.map((it,i) => {
+      const [via, ...resto] = it.testo.split(", ");
+      return `<li id="ac_${i}" role="option" aria-selected="${i===acActive}" data-i="${i}">${esc(via)}${resto.length?`<small>${esc(resto.join(", "))}</small>`:""}</li>`;
+    }).join("");
+  }
+  if (acActive >= 0) $("#k_addr").setAttribute("aria-activedescendant", "ac_"+acActive); else $("#k_addr").removeAttribute("aria-activedescendant");
+  apriLista();
+}
+async function cerca(q){
+  if (acCtrl) acCtrl.abort();
+  acCtrl = new AbortController();
+  try {
+    const res = await fetch(GEO_URL + encodeURIComponent(q), {signal: acCtrl.signal});
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    acItems = (data.results || []).map(leggiRisultato).filter(x => x.testo);
+    acActive = -1;
+    if (document.activeElement === $("#k_addr")) disegnaLista();
+  } catch(err){
+    if (err.name !== "AbortError") mostraFallback();
+  }
+}
+function scegli(i){
+  indirizzo = acItems[i];
+  $("#k_addr").value = indirizzo.testo;
+  chiudiLista();
+  const z = STIMA.zone[indirizzo.zonaKey];
+  const zl = $("#k_zone"); zl.hidden = false;
+  zl.innerHTML = `Zona usata per la stima: <strong>${esc(z.nome)}</strong>`;
+  $("#k_err").hidden = true;
+  if (!$("#k_result").hidden) calcola();
+}
+$("#k_addr").addEventListener("input", e => {
+  indirizzo = null; $("#k_zone").hidden = true;
+  const q = e.target.value.trim();
+  clearTimeout(acTimer);
+  if (geoKo || q.length < 3){ chiudiLista(); return; }
+  acTimer = setTimeout(() => cerca(q), 250);
+});
+$("#k_addr").addEventListener("keydown", e => {
+  const open = !$("#k_list").hidden && acItems.length;
+  if (e.key === "ArrowDown" && open){ e.preventDefault(); acActive = (acActive + 1) % acItems.length; disegnaLista(); }
+  else if (e.key === "ArrowUp" && open){ e.preventDefault(); acActive = (acActive - 1 + acItems.length) % acItems.length; disegnaLista(); }
+  else if (e.key === "Enter" && open && acActive >= 0){ e.preventDefault(); scegli(acActive); }
+  else if (e.key === "Escape"){ chiudiLista(); }
+});
+$("#k_addr").addEventListener("blur", () => setTimeout(chiudiLista, 150));
+$("#k_list").addEventListener("mousedown", e => {
+  const li = e.target.closest("li[data-i]"); if (!li) return;
+  e.preventDefault(); scegli(+li.dataset.i);
+});
+
+/* ----- Calcolo ----- */
+function zonaScelta(){
+  if (indirizzo) return indirizzo.zonaKey;
+  if (!$("#k_fallback").hidden && $("#k_zona").value) return $("#k_zona").value;
+  return "";
+}
 function calcola(){
-  const zona = $("#k_zona").value, camereVal = $("#k_camere").value, periodo = $("#k_periodo").value;
+  const zona = zonaScelta(), camereVal = $("#k_camere").value, periodo = $("#k_periodo").value;
   if (!zona || camereVal === "") return false;
   const camere = +camereVal;
-  const notte = STIMA.prezzoNotte[camere] * STIMA.fattoreZona[zona];
+  const notte = STIMA.prezzoNotte[camere] * STIMA.zone[zona].fattore;
   const [nMin, nMax] = STIMA.nottiOccupate[periodo];
   const min = round500(notte*nMin), max = round500(notte*nMax);
   const out = $("#k_out");
@@ -98,7 +196,8 @@ function calcola(){
   out.classList.remove("flash"); void out.offsetWidth; out.classList.add("flash");
   $("#k_sub").innerHTML = `Con <strong>Basic</strong> e <strong>Support</strong> resta tutto a te, senza commissioni. Con <strong>Premium</strong> (10%) circa ${range(round50(min*STIMA.commissionePremium), round50(max*STIMA.commissionePremium))} all'anno.`;
   ultimaStima = {
-    zona: $("#k_zona").selectedOptions[0].textContent, zonaKey: zona,
+    luogo: indirizzo ? indirizzo.testo : STIMA.zone[zona].nome,
+    indirizzo: indirizzo ? indirizzo.testo : "",
     camere: $("#k_camere").selectedOptions[0].textContent.toLowerCase(),
     periodo: periodo === "anno" ? "tutto l'anno" : "da aprile a ottobre",
     min, max
@@ -107,21 +206,27 @@ function calcola(){
 }
 $("#calcForm").addEventListener("submit", e => {
   e.preventDefault();
-  const ok = calcola();
-  $("#k_err").hidden = ok;
-  if (!ok){ ($("#k_zona").value ? $("#k_camere") : $("#k_zona")).focus(); return; }
+  const ok = calcola(), err = $("#k_err");
+  err.hidden = ok;
+  if (!ok){
+    if (!zonaScelta()){
+      err.textContent = $("#k_fallback").hidden ? "Scrivi l'indirizzo e sceglilo dall'elenco dei suggerimenti." : "Scegli la zona in cui si trova l'alloggio.";
+      ($("#k_fallback").hidden ? $("#k_addr") : $("#k_zona")).focus();
+    } else { err.textContent = "Indica quante camere da letto ha l'alloggio."; $("#k_camere").focus(); }
+    return;
+  }
   const res = $("#k_result"); res.hidden = false;
   const r = res.getBoundingClientRect();
   if (r.bottom > window.innerHeight) res.scrollIntoView({block:"nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
 });
 ["#k_zona","#k_camere","#k_periodo"].forEach(sel => $(sel).addEventListener("change", () => {
   if (!$("#k_result").hidden) calcola();
-  if ($("#k_zona").value && $("#k_camere").value !== "") $("#k_err").hidden = true;
+  if (zonaScelta() && $("#k_camere").value !== "") $("#k_err").hidden = true;
 }));
 $("#k_cta").addEventListener("click", () => {
   if (ultimaStima){
-    if (ultimaStima.zonaKey !== "altra" && !$("#c_loc").value) $("#c_loc").value = ultimaStima.zona;
-    if (!$("#c_msg").value) $("#c_msg").value = `Ho usato il calcolatore: ${ultimaStima.camere}, ${ultimaStima.zona}, ${ultimaStima.periodo}. Stima: ${range(ultimaStima.min, ultimaStima.max)} all'anno. Vorrei una stima personalizzata.`;
+    if (!$("#c_loc").value) $("#c_loc").value = ultimaStima.luogo;
+    if (!$("#c_msg").value) $("#c_msg").value = `Ho usato il calcolatore: ${ultimaStima.camere}, ${ultimaStima.luogo}, ${ultimaStima.periodo}. Stima: ${range(ultimaStima.min, ultimaStima.max)} all'anno. Vorrei una stima personalizzata.`;
   }
   document.getElementById("contatti").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
   setTimeout(()=>$("#c_nome").focus({preventScroll:true}), 500);
