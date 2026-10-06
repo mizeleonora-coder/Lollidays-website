@@ -48,6 +48,85 @@ $("#leadForm").addEventListener("submit", e => {
   $("#leadForm").hidden = true; $("#leadDone").hidden = false;
 });
 
+/* ---------- Hero slideshow ---------- */
+(function(){
+  const root = $("#slides"); if (!root) return;
+  const slides = [...root.querySelectorAll(".slide")], msgs = [...root.querySelectorAll(".msg")];
+  const DURATA = 7000;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  let cur = 0, timer = null, hover = false;
+  function show(i){
+    cur = (i + slides.length) % slides.length;
+    slides.forEach((s,k) => s.classList.toggle("is-active", k === cur));
+    msgs.forEach((m,k) => { m.classList.toggle("is-active", k === cur); m.setAttribute("aria-hidden", k === cur ? "false" : "true"); });
+  }
+  function stop(){ clearInterval(timer); timer = null; }
+  function play(){ stop(); if (!hover && !document.hidden) timer = setInterval(() => show(cur + 1), DURATA); }
+  root.addEventListener("mouseenter", () => { hover = true; stop(); });
+  root.addEventListener("mouseleave", () => { hover = false; play(); });
+  document.addEventListener("visibilitychange", play);
+  play();
+})();
+
+/* ---------- Earnings calculator ----------
+   VALORI DI ESEMPIO: sostituirli con dati reali di mercato.
+   prezzoNotte: prezzo medio per notte in CHF, per numero di camere (0 = monolocale)
+   fattoreZona: moltiplicatore per località
+   nottiOccupate: notti prenotate all'anno [minimo, massimo] */
+const STIMA = {
+  prezzoNotte: {0:95, 1:130, 2:175, 3:230, 4:300},
+  fattoreZona: {locarno:1.15, lugano:1.10, valli:0.95, bellinzona:0.85, altra:1.00},
+  nottiOccupate: {anno:[140,190], stagione:[90,130]},
+  commissionePremium: 0.10
+};
+const num = n => Math.round(n).toLocaleString("de-CH");
+const chf = n => "CHF " + num(n);
+const range = (a,b) => `CHF ${num(a)}–${num(b)}`;
+const round500 = n => Math.round(n/500)*500;
+const round50 = n => Math.round(n/50)*50;
+let ultimaStima = null;
+
+function calcola(){
+  const zona = $("#k_zona").value, camereVal = $("#k_camere").value, periodo = $("#k_periodo").value;
+  if (!zona || camereVal === "") return false;
+  const camere = +camereVal;
+  const notte = STIMA.prezzoNotte[camere] * STIMA.fattoreZona[zona];
+  const [nMin, nMax] = STIMA.nottiOccupate[periodo];
+  const min = round500(notte*nMin), max = round500(notte*nMax);
+  const out = $("#k_out");
+  out.textContent = range(min, max);
+  out.classList.remove("flash"); void out.offsetWidth; out.classList.add("flash");
+  $("#k_sub").innerHTML = `Con <strong>Basic</strong> e <strong>Support</strong> resta tutto a te, senza commissioni. Con <strong>Premium</strong> (10%) circa ${range(round50(min*STIMA.commissionePremium), round50(max*STIMA.commissionePremium))} all'anno.`;
+  ultimaStima = {
+    zona: $("#k_zona").selectedOptions[0].textContent, zonaKey: zona,
+    camere: $("#k_camere").selectedOptions[0].textContent.toLowerCase(),
+    periodo: periodo === "anno" ? "tutto l'anno" : "da aprile a ottobre",
+    min, max
+  };
+  return true;
+}
+$("#calcForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const ok = calcola();
+  $("#k_err").hidden = ok;
+  if (!ok){ ($("#k_zona").value ? $("#k_camere") : $("#k_zona")).focus(); return; }
+  const res = $("#k_result"); res.hidden = false;
+  const r = res.getBoundingClientRect();
+  if (r.bottom > window.innerHeight) res.scrollIntoView({block:"nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
+});
+["#k_zona","#k_camere","#k_periodo"].forEach(sel => $(sel).addEventListener("change", () => {
+  if (!$("#k_result").hidden) calcola();
+  if ($("#k_zona").value && $("#k_camere").value !== "") $("#k_err").hidden = true;
+}));
+$("#k_cta").addEventListener("click", () => {
+  if (ultimaStima){
+    if (ultimaStima.zonaKey !== "altra" && !$("#c_loc").value) $("#c_loc").value = ultimaStima.zona;
+    if (!$("#c_msg").value) $("#c_msg").value = `Ho usato il calcolatore: ${ultimaStima.camere}, ${ultimaStima.zona}, ${ultimaStima.periodo}. Stima: ${range(ultimaStima.min, ultimaStima.max)} all'anno. Vorrei una stima personalizzata.`;
+  }
+  document.getElementById("contatti").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
+  setTimeout(()=>$("#c_nome").focus({preventScroll:true}), 500);
+});
+
 /* ---------- Portal config ---------- */
 const AMENITIES = ["Wi-Fi","Cucina","Aria condizionata","Riscaldamento","TV","Parcheggio","Piscina","Balcone o terrazza","Ascensore","Lavatrice","Lavastoviglie","Spazio di lavoro","Culla","Animali ammessi","Asciugacapelli","Ferro da stiro","Macchina del caffè","Spazio esterno"];
 const PHOTO_CATS = ["Esterno","Soggiorno","Camere da letto","Bagni","Cucina","Spazi esterni","Vista","Dotazioni e dettagli","Altro"];
